@@ -1,9 +1,6 @@
 use home;
 use std::collections::HashMap;
 use std::env;
-use std::error::Error;
-use std::fs;
-use std::fs::File;
 use std::fs::OpenOptions;
 use std::io;
 use std::io::prelude::*;
@@ -20,6 +17,8 @@ Usage: tp [CMD] [ARGS]
 
 help            Show usage
 ls              List marked directories
+m               Mark current directory
+m [dir]         Mark directory 
 "#;
 
 static ERR_NO_CMD: &'static str = "No command given. Run 'tp help' for more.";
@@ -61,27 +60,41 @@ impl MarksRespository for Repository {
 
     fn add_mark(&self, path: Option<String>) -> Result<usize, String> {
         let dir = env::current_dir().expect("Current directory");
-        if path.is_none() {
-            let marked_path = get_marked_path();
+        let marked_path = get_marked_path();
+        let marked = self.get_marks();
+        let key = marked.len();
 
-            let marked = self.get_marks();
-            let key = marked.len();
-            let new_line = mark_entry(&dir, key);
+        let value = if path.is_none() {
+            dir
+        } else {
+            let mut path_buf = PathBuf::new();
+            let path_uw = path.unwrap();
+            path_buf.push(&path_uw);
 
-            let mut file = OpenOptions::new()
-                .write(true)
-                .append(true)
-                .open(marked_path)
-                .unwrap();
-
-            if let Err(e) = writeln!(file, "{}", new_line) {
-                return Err(e.to_string());
+            if !path_buf.is_dir() {
+                return Err("Path arg must be a directory".to_string());
             }
 
-            return Ok(key);
+            if path_buf.is_absolute() {
+                path_buf
+            } else {
+                dir.join(path_buf)
+            }
+        };
+
+        let new_line = mark_entry(&value, key);
+
+        let mut file = OpenOptions::new()
+            .write(true)
+            .append(true)
+            .open(marked_path)
+            .unwrap();
+
+        if let Err(e) = writeln!(file, "{}", new_line) {
+            return Err(e.to_string());
         }
 
-        Err("Undefined".to_string())
+        return Ok(key);
     }
 }
 
@@ -130,10 +143,10 @@ fn run_cmd(args: Vec<String>, repo: impl MarksRespository) -> Result<String, Str
     let dir = args.get(2);
 
     if cmd == "m" {
-        return repo.add_mark(dir.map(|it| it.to_string()))
+        return repo
+            .add_mark(dir.map(|it| it.to_string()))
             .map(|key| format!("Marked as {}\n", key));
     }
-
 
     Err(format!("Unknown command '{}'", cmd))
 }
@@ -166,7 +179,7 @@ mod test {
         }
 
         fn add_mark(&self, path: Option<String>) -> Result<usize, String> {
-            return Ok(5)
+            return Ok(5);
         }
     }
 
@@ -212,6 +225,17 @@ mod test {
     #[test]
     fn should_add_mark() {
         let result = run_cmd(vec!["tp".to_string(), "m".to_string()], mock_repo());
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "Marked as 5\n");
+    }
+
+    #[test]
+    fn should_add_mark_with_path() {
+        let result = run_cmd(
+            vec!["tp".to_string(), "m".to_string(), "dir".to_string()],
+            mock_repo(),
+        );
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "Marked as 5\n");
