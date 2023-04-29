@@ -81,7 +81,7 @@ impl MarksRespository for Repository {
             return Ok(key);
         }
 
-        Err("fail".to_string())
+        Err("Undefined".to_string())
     }
 }
 
