@@ -4,12 +4,12 @@ use std::env;
 use std::error::Error;
 use std::fs;
 use std::fs::File;
+use std::fs::OpenOptions;
 use std::io;
+use std::io::prelude::*;
 use std::io::BufRead;
 use std::path::Path;
 use std::path::PathBuf;
-use std::fs::OpenOptions;
-use std::io::prelude::*;
 
 static DATA_PATH: &'static str = ".cache/teleport/";
 static MARKED: &'static str = "marked";
@@ -28,24 +28,14 @@ struct Repository {}
 
 trait MarksRespository {
     fn get_marks(&self) -> HashMap<String, String>;
+    fn add_mark(&self, path: Option<String>) -> Result<usize, String>;
 }
 
 impl MarksRespository for Repository {
     fn get_marks(&self) -> HashMap<String, String> {
-        let home_dir = home::home_dir().expect("Unable to get home directory");
+        let marked_path = get_marked_path();
 
-        let mut data_path = PathBuf::new();
-        data_path.push(home_dir.as_path());
-        data_path.push(DATA_PATH);
-
-        let mut marked_path = PathBuf::new();
-        marked_path.push(&data_path);
-        marked_path.push(Path::new(MARKED));
-
-        let file = OpenOptions::new()
-            .read(true)
-            .open(marked_path)
-            .unwrap();
+        let file = OpenOptions::new().read(true).open(marked_path).unwrap();
 
         let lines = io::BufReader::new(file).lines();
         let mut map = HashMap::new();
@@ -68,8 +58,50 @@ impl MarksRespository for Repository {
 
         map
     }
+
+    fn add_mark(&self, path: Option<String>) -> Result<usize, String> {
+        let dir = env::current_dir().expect("Current directory");
+        if path.is_none() {
+            let marked_path = get_marked_path();
+
+            let marked = self.get_marks();
+            let key = marked.len();
+            let new_line = mark_entry(&dir, key);
+
+            let mut file = OpenOptions::new()
+                .write(true)
+                .append(true)
+                .open(marked_path)
+                .unwrap();
+
+            if let Err(e) = writeln!(file, "{}", new_line) {
+                return Err(e.to_string());
+            }
+
+            return Ok(key);
+        }
+
+        Err("fail".to_string())
+    }
 }
 
+fn get_marked_path() -> PathBuf {
+    let home_dir = home::home_dir().expect("Unable to get home directory");
+
+    let mut data_path = PathBuf::new();
+    data_path.push(home_dir.as_path());
+    data_path.push(DATA_PATH);
+
+    let mut marked_path = PathBuf::new();
+    marked_path.push(&data_path);
+    marked_path.push(Path::new(MARKED));
+
+    marked_path
+}
+
+fn mark_entry(cd: &PathBuf, key: usize) -> String {
+    return format!("{},{}", key, cd.to_str().expect("Valid string"));
+}
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -78,23 +110,31 @@ fn main() {
 
     match result {
         Ok(out) => print!("{}", out),
-        Err(msg) => eprintln!("{}", msg)
+        Err(msg) => eprintln!("{}", msg),
     }
 }
 
 fn run_cmd(args: Vec<String>, repo: impl MarksRespository) -> Result<String, String> {
     let cmd = match args.get(1) {
         Some(s) => s,
-        None => return Err(ERR_NO_CMD.to_string())
+        None => return Err(ERR_NO_CMD.to_string()),
     };
 
     if cmd == "help" {
-        return Ok(HELP.to_string())
+        return Ok(HELP.to_string());
     }
     if cmd == "ls" {
-        return Ok(ls(repo))
+        return Ok(ls(repo));
     }
- 
+
+    let dir = args.get(2);
+
+    if cmd == "m" {
+        return repo.add_mark(dir.map(|it| it.to_string()))
+            .map(|key| format!("Marked as {}\n", key));
+    }
+
+
     Err(format!("Unknown command '{}'", cmd))
 }
 
@@ -111,10 +151,10 @@ fn ls(repo: impl MarksRespository) -> String {
 
 #[cfg(test)]
 mod test {
-    use std::collections::HashMap;
-    use crate::MarksRespository;
     use crate::run_cmd;
+    use crate::MarksRespository;
     use crate::{ERR_NO_CMD, HELP};
+    use std::collections::HashMap;
 
     struct MockRepo {}
 
@@ -124,49 +164,56 @@ mod test {
             map.insert("0".to_string(), "/dir".to_string());
             map
         }
+
+        fn add_mark(&self, path: Option<String>) -> Result<usize, String> {
+            return Ok(5)
+        }
     }
 
     fn mock_repo() -> impl MarksRespository {
         let mock_repo = MockRepo {};
         mock_repo
     }
-    
-    
+
     #[test]
-    fn should_fail_without_cmd() {   
+    fn should_fail_without_cmd() {
         let result = run_cmd(vec!["tp".to_string()], mock_repo());
-    
+
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), ERR_NO_CMD.to_string());
     }
-    
+
     #[test]
     fn should_print_help() {
         let result = run_cmd(vec!["tp".to_string(), "help".to_string()], mock_repo());
-    
+
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), HELP.to_string());
     }
-    
+
     #[test]
     fn should_fail_with_unknown_cmd() {
         let result = run_cmd(vec!["tp".to_string(), "unknown".to_string()], mock_repo());
-    
+
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "Unknown command 'unknown'");
     }
-    
+
     #[test]
     fn should_list_marks() {
         let result = run_cmd(vec!["tp".to_string(), "ls".to_string()], mock_repo());
 
-        let out = concat!(
-            "\n# Marks\n\n",
-            "0  : /dir\n\n"
-        );
+        let out = concat!("\n# Marks\n\n", "0  : /dir\n\n");
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), out);
     }
-    
+
+    #[test]
+    fn should_add_mark() {
+        let result = run_cmd(vec!["tp".to_string(), "m".to_string()], mock_repo());
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "Marked as 5\n");
+    }
 }
