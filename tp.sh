@@ -1,7 +1,7 @@
 #!/bin/bash
 
 function tp() {
-    if [[ $# -eq 1 && "$1" != "ls" ]]
+    if [[ $# -eq 1 && "$1" != "ls" && "$1" != "help" ]]
     then
         dir=$(teleport g $1)
         if [ "$dir" != "" ]
@@ -11,4 +11,3 @@ function tp() {
     else
         teleport "$@"
     fi
-}

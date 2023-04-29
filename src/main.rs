@@ -20,6 +20,7 @@ ls              List marked directories
 m               Mark current directory
 m [dir]         Mark directory 
 g [key]         Get marked directory
+
 "#;
 
 static ERR_NO_CMD: &'static str = "No command given. Run 'tp help' for more.";
