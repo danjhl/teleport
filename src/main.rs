@@ -1,5 +1,5 @@
 use home;
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::env;
 use std::fs::OpenOptions;
 use std::io;
@@ -19,6 +19,7 @@ help            Show usage
 ls              List marked directories
 m               Mark current directory
 m [dir]         Mark directory 
+g [key]         Get marked directory
 "#;
 
 static ERR_NO_CMD: &'static str = "No command given. Run 'tp help' for more.";
@@ -26,18 +27,18 @@ static ERR_NO_CMD: &'static str = "No command given. Run 'tp help' for more.";
 struct Repository {}
 
 trait MarksRespository {
-    fn get_marks(&self) -> HashMap<String, String>;
+    fn get_marks(&self) -> BTreeMap<String, String>;
     fn add_mark(&self, path: Option<String>) -> Result<usize, String>;
 }
 
 impl MarksRespository for Repository {
-    fn get_marks(&self) -> HashMap<String, String> {
+    fn get_marks(&self) -> BTreeMap<String, String> {
         let marked_path = get_marked_path();
 
         let file = OpenOptions::new().read(true).open(marked_path).unwrap();
 
         let lines = io::BufReader::new(file).lines();
-        let mut map = HashMap::new();
+        let mut map = BTreeMap::new();
 
         for line in lines {
             let split_o = line.unwrap();
@@ -140,12 +141,14 @@ fn run_cmd(args: Vec<String>, repo: impl MarksRespository) -> Result<String, Str
         return Ok(ls(repo));
     }
 
-    let dir = args.get(2);
+    let arg = args.get(2);
 
     if cmd == "m" {
-        return repo
-            .add_mark(dir.map(|it| it.to_string()))
-            .map(|key| format!("Marked as {}\n", key));
+        return mark(arg, repo);
+    }
+
+    if cmd == "g" {
+        return get(arg, repo);
     }
 
     Err(format!("Unknown command '{}'", cmd))
@@ -162,19 +165,36 @@ fn ls(repo: impl MarksRespository) -> String {
     out
 }
 
+fn mark(arg: Option<&String>, repo: impl MarksRespository) -> Result<String, String> {
+    repo.add_mark(arg.map(|it| it.to_string()))
+        .map(|key| format!("Marked as {}\n", key))
+}
+
+fn get(arg: Option<&String>, repo: impl MarksRespository) -> Result<String, String> {
+    if arg.is_none() {
+        return Err("Get command requires key argument\n".to_string());
+    }
+    let key = arg.unwrap();
+    let marks = repo.get_marks();
+    let value_o = marks.get(key);
+    let value = value_o.map(|it| it.to_string()).unwrap_or("".to_string());
+    return Ok(value);
+}
+
 #[cfg(test)]
 mod test {
     use crate::run_cmd;
     use crate::MarksRespository;
     use crate::{ERR_NO_CMD, HELP};
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
 
     struct MockRepo {}
 
     impl MarksRespository for MockRepo {
-        fn get_marks(&self) -> HashMap<String, String> {
-            let mut map = HashMap::new();
+        fn get_marks(&self) -> BTreeMap<String, String> {
+            let mut map = BTreeMap::new();
             map.insert("0".to_string(), "/dir".to_string());
+            map.insert("1".to_string(), "/dir/two".to_string());
             map
         }
 
@@ -216,7 +236,7 @@ mod test {
     fn should_list_marks() {
         let result = run_cmd(vec!["tp".to_string(), "ls".to_string()], mock_repo());
 
-        let out = concat!("\n# Marks\n\n", "0  : /dir\n\n");
+        let out = concat!("\n# Marks\n\n", "0  : /dir\n", "1  : /dir/two\n\n");
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), out);
@@ -239,5 +259,24 @@ mod test {
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "Marked as 5\n");
+    }
+
+    #[test]
+    fn should_get_mark() {
+        let result = run_cmd(
+            vec!["tp".to_string(), "g".to_string(), "0".to_string()],
+            mock_repo(),
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "/dir");
+    }
+
+    #[test]
+    fn should_fail_to_get_mark_without_key_arg() {
+        let result = run_cmd(vec!["tp".to_string(), "g".to_string()], mock_repo());
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Get command requires key argument\n");
     }
 }
