@@ -19,7 +19,7 @@ ls              List marked directories
 m               Mark current directory
 m [dir]         Mark directory 
 g [key]         Get marked directory
-
+bm [key] [dir]  Bookmark directory
 "#;
 
 static ERR_NO_CMD: &str = "No command given. Run 'tp help' for more.";
