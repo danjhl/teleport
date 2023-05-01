@@ -1,4 +1,3 @@
-use home;
 use std::collections::BTreeMap;
 use std::env;
 use std::fs::OpenOptions;
@@ -8,11 +7,11 @@ use std::io::BufRead;
 use std::path::Path;
 use std::path::PathBuf;
 
-static DATA_PATH: &'static str = ".cache/teleport/";
-static MARKED: &'static str = "marked";
-static BOOKMARKED: &'static str = "bookmarked";
+static DATA_PATH: &str = ".cache/teleport/";
+static MARKED: &str = "marked";
+static BOOKMARKED: &str = "bookmarked";
 
-static HELP: &'static str = r#"
+static HELP: &str = r#"
 Usage: tp [CMD] [ARGS]
 
 help            Show usage
@@ -23,46 +22,29 @@ g [key]         Get marked directory
 
 "#;
 
-static ERR_NO_CMD: &'static str = "No command given. Run 'tp help' for more.";
+static ERR_NO_CMD: &str = "No command given. Run 'tp help' for more.";
 
 struct Repository {}
 
-trait MarksRespository {
+trait MarksRepository {
     fn get_marks(&self) -> BTreeMap<String, String>;
+    fn get_bookmarks(&self) -> BTreeMap<String, String>;
     fn add_mark(&self, path: Option<String>) -> Result<usize, String>;
+    fn store_bookmarks(&self, bookmarks: BTreeMap<String, String>);
 }
 
-impl MarksRespository for Repository {
+impl MarksRepository for Repository {
     fn get_marks(&self) -> BTreeMap<String, String> {
-        let marked_path = get_marked_path();
+        get_marks_for(MARKED)
+    }
 
-        let file = OpenOptions::new().read(true).open(marked_path).unwrap();
-
-        let lines = io::BufReader::new(file).lines();
-        let mut map = BTreeMap::new();
-
-        for line in lines {
-            let split_o = line.unwrap();
-            let mut split = split_o.split(",");
-            let key_o = split.next();
-            let dir_o = split.next();
-
-            if key_o.is_none() || dir_o.is_none() {
-                continue;
-            }
-
-            let key = key_o.unwrap();
-            let dir = dir_o.unwrap();
-
-            map.insert(String::from(key), String::from(dir));
-        }
-
-        map
+    fn get_bookmarks(&self) -> BTreeMap<String, String> {
+        get_marks_for(BOOKMARKED)
     }
 
     fn add_mark(&self, path: Option<String>) -> Result<usize, String> {
         let dir = env::current_dir().expect("Current directory");
-        let marked_path = get_marked_path();
+        let marked_path = get_marks_file_path(MARKED);
         let marked = self.get_marks();
         let key = marked.len();
 
@@ -72,11 +54,11 @@ impl MarksRespository for Repository {
             let mut path_buf = PathBuf::new();
             let path_uw = path.unwrap();
             path_buf.push(&path_uw);
-
+    
             if !path_buf.is_dir() {
                 return Err("Path arg must be a directory".to_string());
             }
-
+    
             if path_buf.is_absolute() {
                 path_buf
             } else {
@@ -96,11 +78,61 @@ impl MarksRespository for Repository {
             return Err(e.to_string());
         }
 
-        return Ok(key);
+        Ok(key)
+    }
+
+    fn store_bookmarks(&self, bookmarks: BTreeMap<String, String>) {
+        let bookmarked_path = get_marks_file_path(BOOKMARKED);
+        let mut content = String::new();
+
+        for (key, value) in bookmarks {
+            content.push_str(&key);
+            content.push(',');
+            content.push_str(&value);
+            content.push('\n');
+        }
+
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(bookmarked_path)
+            .unwrap();
+
+        if let Err(e) = write!(file, "{}", content) {
+            eprintln!("Couldn't write to file: {}", e)
+        }
     }
 }
 
-fn get_marked_path() -> PathBuf {
+fn get_marks_for(file: &'static str) -> BTreeMap<String, String> {
+    let marked_path = get_marks_file_path(file);
+
+    let file = OpenOptions::new().read(true).open(marked_path).unwrap();
+
+    let lines = io::BufReader::new(file).lines();
+    let mut map = BTreeMap::new();
+
+    for line in lines {
+        let split_o = line.unwrap();
+        let mut split = split_o.split(',');
+        let key_o = split.next();
+        let dir_o = split.next();
+
+        if key_o.is_none() || dir_o.is_none() {
+            continue;
+        }
+
+        let key = key_o.unwrap();
+        let dir = dir_o.unwrap();
+
+        map.insert(String::from(key), String::from(dir));
+    }
+
+    map
+}
+
+fn get_marks_file_path(file: &'static str) -> PathBuf {
     let home_dir = home::home_dir().expect("Unable to get home directory");
 
     let mut data_path = PathBuf::new();
@@ -109,7 +141,7 @@ fn get_marked_path() -> PathBuf {
 
     let mut marked_path = PathBuf::new();
     marked_path.push(&data_path);
-    marked_path.push(Path::new(MARKED));
+    marked_path.push(Path::new(file));
 
     marked_path
 }
@@ -129,7 +161,7 @@ fn main() {
     }
 }
 
-fn run_cmd(args: Vec<String>, repo: impl MarksRespository) -> Result<String, String> {
+fn run_cmd(args: Vec<String>, repo: impl MarksRepository) -> Result<String, String> {
     let cmd = match args.get(1) {
         Some(s) => s,
         None => return Err(ERR_NO_CMD.to_string()),
@@ -152,46 +184,105 @@ fn run_cmd(args: Vec<String>, repo: impl MarksRespository) -> Result<String, Str
         return get(arg, repo);
     }
 
+    if cmd == "bm" {
+        return bookmark(arg, args.get(3), repo);
+    }
+
     Err(format!("Unknown command '{}'", cmd))
 }
 
-fn ls(repo: impl MarksRespository) -> String {
+fn ls(repo: impl MarksRepository) -> String {
     let marks = repo.get_marks();
+    let bookmarks = repo.get_bookmarks();
+
     let mut out = String::new();
     out.push_str("\n# Marks\n\n");
     for (key, value) in marks {
         out.push_str(&format!("{:width$} : {}\n", key, value, width = 2));
     }
     out.push_str("\n");
+
+    out.push_str("# Bookmarks\n\n");
+    for (key, value) in bookmarks {
+        out.push_str(&format!("{:width$} : {}\n", key, value, width = 2));
+    }
+    out.push_str("\n");
     out
 }
 
-fn mark(arg: Option<&String>, repo: impl MarksRespository) -> Result<String, String> {
+fn mark(arg: Option<&String>, repo: impl MarksRepository) -> Result<String, String> {
     repo.add_mark(arg.map(|it| it.to_string()))
         .map(|key| format!("Marked as {}\n", key))
 }
 
-fn get(arg: Option<&String>, repo: impl MarksRespository) -> Result<String, String> {
+fn get(arg: Option<&String>, repo: impl MarksRepository) -> Result<String, String> {
     if arg.is_none() {
         return Err("Get command requires key argument\n".to_string());
     }
     let key = arg.unwrap();
     let marks = repo.get_marks();
+    let bookmarks = repo.get_bookmarks();
+
+    let mut value_o = bookmarks.get(key);
+    if (value_o.is_some()) {
+        return Ok(value_o.unwrap().to_string());
+    }
+
     let value_o = marks.get(key);
-    let value = value_o.map(|it| it.to_string()).unwrap_or("".to_string());
-    return Ok(value);
+    if (value_o.is_some()) {
+        return Ok(value_o.unwrap().to_string());
+    }
+    return Ok("".to_string());
+}
+
+fn bookmark(
+    key: Option<&String>,
+    path: Option<&String>,
+    repo: impl MarksRepository,
+) -> Result<String, String> {
+    if key.is_none() {
+        return Err("bookmark needs a key argument".to_string());
+    }
+
+    // todo duplicated
+    let dir = env::current_dir().expect("Current directory");
+
+    let value = if path.is_none() {
+        dir
+    } else {
+        let mut path_buf = PathBuf::new();
+        let path_uw = path.unwrap();
+        path_buf.push(&path_uw);
+
+        if !path_buf.is_dir() {
+            return Err("Path arg must be a directory".to_string());
+        }
+
+        if path_buf.is_absolute() {
+            path_buf
+        } else {
+            dir.join(path_buf)
+        }
+    };
+
+    let key_uw = key.unwrap();
+    let mut bookmarks = repo.get_bookmarks();
+    bookmarks.insert(key_uw.to_string(), value.to_string_lossy().to_string());
+    repo.store_bookmarks(bookmarks);
+
+    Ok(format!("Bookmarked as {}\n", key_uw.to_string()))
 }
 
 #[cfg(test)]
 mod test {
     use crate::run_cmd;
-    use crate::MarksRespository;
+    use crate::MarksRepository;
     use crate::{ERR_NO_CMD, HELP};
     use std::collections::BTreeMap;
 
     struct MockRepo {}
 
-    impl MarksRespository for MockRepo {
+    impl MarksRepository for MockRepo {
         fn get_marks(&self) -> BTreeMap<String, String> {
             let mut map = BTreeMap::new();
             map.insert("0".to_string(), "/dir".to_string());
@@ -200,13 +291,21 @@ mod test {
         }
 
         fn add_mark(&self, path: Option<String>) -> Result<usize, String> {
-            return Ok(5);
+            Ok(5)
         }
+
+        fn get_bookmarks(&self) -> BTreeMap<String, String> {
+            let mut map = BTreeMap::new();
+            map.insert("a".to_string(), "/dir".to_string());
+            map.insert("b".to_string(), "/dir/two".to_string());
+            map
+        }
+
+        fn store_bookmarks(&self, bookmarks: BTreeMap<String, String>) {}
     }
 
-    fn mock_repo() -> impl MarksRespository {
-        let mock_repo = MockRepo {};
-        mock_repo
+    fn mock_repo() -> impl MarksRepository {
+        MockRepo {}
     }
 
     #[test]
@@ -237,7 +336,14 @@ mod test {
     fn should_list_marks() {
         let result = run_cmd(vec!["tp".to_string(), "ls".to_string()], mock_repo());
 
-        let out = concat!("\n# Marks\n\n", "0  : /dir\n", "1  : /dir/two\n\n");
+        let out = concat!(
+            "\n# Marks\n\n",
+            "0  : /dir\n",
+            "1  : /dir/two\n",
+            "\n# Bookmarks\n\n",
+            "a  : /dir\n",
+            "b  : /dir/two\n\n"
+        );
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), out);
@@ -279,5 +385,16 @@ mod test {
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "Get command requires key argument\n");
+    }
+
+    #[test]
+    fn should_add_bookmark_for_current_dir() {
+        let result = run_cmd(
+            vec!["tp".to_string(), "bm".to_string(), "cd".to_string()],
+            mock_repo(),
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "Bookmarked as cd\n");
     }
 }
