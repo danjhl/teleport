@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::env;
+use std::fs::File;
 use std::fs::OpenOptions;
 use std::io;
 use std::io::prelude::*;
@@ -31,6 +32,7 @@ trait MarksRepository {
     fn get_bookmarks(&self) -> BTreeMap<String, String>;
     fn add_mark(&self, path: Option<String>) -> Result<usize, String>;
     fn store_bookmarks(&self, bookmarks: BTreeMap<String, String>);
+    fn clear_marks(&self);
 }
 
 impl MarksRepository for Repository {
@@ -103,6 +105,12 @@ impl MarksRepository for Repository {
             eprintln!("Couldn't write to file: {}", e)
         }
     }
+
+    fn clear_marks(&self) {
+        let marked_path = get_marks_file_path(MARKED);
+        let mut file = File::create(marked_path).unwrap();
+        file.set_len(0);
+    }
 }
 
 fn get_marks_for(file: &'static str) -> BTreeMap<String, String> {
@@ -147,7 +155,7 @@ fn get_marks_file_path(file: &'static str) -> PathBuf {
 }
 
 fn mark_entry(cd: &PathBuf, key: usize) -> String {
-    return format!("{},{}", key, cd.to_str().expect("Valid string"));
+    format!("{},{}", key, cd.to_str().expect("Valid string"))
 }
 
 fn main() {
@@ -188,6 +196,15 @@ fn run_cmd(args: Vec<String>, repo: impl MarksRepository) -> Result<String, Stri
         return bookmark(arg, args.get(3), repo);
     }
 
+    if cmd == "rm" {
+        return remove_bookmark(arg, repo);
+    }
+
+    if cmd == "clear" {
+        repo.clear_marks();
+        return Ok("Cleared marks\n".to_string());
+    }
+
     Err(format!("Unknown command '{}'", cmd))
 }
 
@@ -198,13 +215,13 @@ fn ls(repo: impl MarksRepository) -> String {
     let mut out = String::new();
     out.push_str("\n# Marks\n\n");
     for (key, value) in marks {
-        out.push_str(&format!("{:width$} : {}\n", key, value, width = 2));
+        out.push_str(&format!("{:width$} : {}\n", key, value, width = 5));
     }
     out.push_str("\n");
 
     out.push_str("# Bookmarks\n\n");
     for (key, value) in bookmarks {
-        out.push_str(&format!("{:width$} : {}\n", key, value, width = 2));
+        out.push_str(&format!("{:width$} : {}\n", key, value, width = 5));
     }
     out.push_str("\n");
     out
@@ -224,12 +241,12 @@ fn get(arg: Option<&String>, repo: impl MarksRepository) -> Result<String, Strin
     let bookmarks = repo.get_bookmarks();
 
     let mut value_o = bookmarks.get(key);
-    if (value_o.is_some()) {
+    if value_o.is_some() {
         return Ok(value_o.unwrap().to_string());
     }
 
     let value_o = marks.get(key);
-    if (value_o.is_some()) {
+    if value_o.is_some() {
         return Ok(value_o.unwrap().to_string());
     }
     return Ok("".to_string());
@@ -273,6 +290,23 @@ fn bookmark(
     Ok(format!("Bookmarked as {}\n", key_uw.to_string()))
 }
 
+fn remove_bookmark(key: Option<&String>, repo: impl MarksRepository) -> Result<String, String> {
+    if key.is_none() {
+        return Err("remove requires key argument".to_string());
+    }
+
+    let key_uw = key.unwrap();
+
+    let mut bookmarks = repo.get_bookmarks();
+    let removed = bookmarks.remove(key_uw);
+    repo.store_bookmarks(bookmarks);
+    if removed.is_some() {
+        return Ok(format!("Removed {}\n", key_uw));
+    } else {
+        return Err(format!("No bookmark named {} found", key_uw));
+    }
+}
+
 #[cfg(test)]
 mod test {
     use crate::run_cmd;
@@ -302,6 +336,8 @@ mod test {
         }
 
         fn store_bookmarks(&self, bookmarks: BTreeMap<String, String>) {}
+
+        fn clear_marks(&self) {}
     }
 
     fn mock_repo() -> impl MarksRepository {
@@ -338,11 +374,11 @@ mod test {
 
         let out = concat!(
             "\n# Marks\n\n",
-            "0  : /dir\n",
-            "1  : /dir/two\n",
+            "0     : /dir\n",
+            "1     : /dir/two\n",
             "\n# Bookmarks\n\n",
-            "a  : /dir\n",
-            "b  : /dir/two\n\n"
+            "a     : /dir\n",
+            "b     : /dir/two\n\n"
         );
 
         assert!(result.is_ok());
@@ -396,5 +432,24 @@ mod test {
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "Bookmarked as cd\n");
+    }
+
+    #[test]
+    fn should_remove_bookmark() {
+        let result = run_cmd(
+            vec!["tp".to_string(), "rm".to_string(), "b".to_string()],
+            mock_repo(),
+        );
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "Removed b\n");
+    }
+
+    #[test]
+    fn should_clear_marks() {
+        let result = run_cmd(vec!["tp".to_string(), "clear".to_string()], mock_repo());
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "Cleared marks\n");
     }
 }
