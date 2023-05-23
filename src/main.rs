@@ -12,15 +12,16 @@ static DATA_PATH: &str = ".cache/teleport/";
 static MARKED: &str = "marked";
 static BOOKMARKED: &str = "bookmarked";
 
-static HELP: &str = r#"
-Usage: tp [CMD] [ARGS]
+static HELP_TM: &str = r#"
+Usage: tm [CMD] [ARG] [FLAGS]
 
-help            Show usage
-ls              List marked directories
-m               Mark current directory
-m [dir]         Mark directory 
-g [key]         Get marked directory
-bm [key] [dir]  Bookmark directory
+Commands: 
+
+tm [dir]            Mark directory uses current directory if no dir argument
+tm [dir] -b [key]   Mark as bookmark with key
+tm -ls              List marked directories
+tm -help            Show usage
+tm -g [key]         Get marked directory
 "#;
 
 static ERR_NO_CMD: &str = "No command given. Run 'tp help' for more.";
@@ -56,11 +57,11 @@ impl MarksRepository for Repository {
             let mut path_buf = PathBuf::new();
             let path_uw = path.unwrap();
             path_buf.push(&path_uw);
-    
+
             if !path_buf.is_dir() {
                 return Err("Path arg must be a directory".to_string());
             }
-    
+
             if path_buf.is_absolute() {
                 path_buf
             } else {
@@ -176,33 +177,11 @@ fn run_cmd(args: Vec<String>, repo: impl MarksRepository) -> Result<String, Stri
     };
 
     if cmd == "help" {
-        return Ok(HELP.to_string());
-    }
-    if cmd == "ls" {
-        return Ok(ls(repo));
+        return Ok(HELP_TM.to_string());
     }
 
-    let arg = args.get(2);
-
-    if cmd == "m" {
-        return mark(arg, repo);
-    }
-
-    if cmd == "g" {
-        return get(arg, repo);
-    }
-
-    if cmd == "bm" {
-        return bookmark(arg, args.get(3), repo);
-    }
-
-    if cmd == "rm" {
-        return remove_bookmark(arg, repo);
-    }
-
-    if cmd == "clear" {
-        repo.clear_marks();
-        return Ok("Cleared marks\n".to_string());
+    if cmd == "mark" {
+        return mark(&args[2..], repo);
     }
 
     Err(format!("Unknown command '{}'", cmd))
@@ -227,7 +206,52 @@ fn ls(repo: impl MarksRepository) -> String {
     out
 }
 
-fn mark(arg: Option<&String>, repo: impl MarksRepository) -> Result<String, String> {
+fn mark(args: &[String], repo: impl MarksRepository) -> Result<String, String> {
+    if args.is_empty() {
+        return mark_dir(None, repo);
+    }
+
+    let flag = match args.get(0) {
+        Some(some) => some,
+        None => return Err("Missing command for mark command".to_string()),
+    };
+
+    if flag == "-ls" {
+        return Ok(ls(repo));
+    }
+
+    if !flag.starts_with('-') && args.len() == 1 {
+        return mark_dir(args.get(0), repo);
+    }
+
+    let flag2 = args.get(1);
+    let arg2: Option<&String> = args.get(2);
+
+    if flag == "-b" && flag2.is_some() && !flag2.unwrap().starts_with('-') {
+        return bookmark(flag2, arg2, repo);
+    }
+
+    if flag == "-g" {
+        if flag2.is_some() && !flag2.unwrap().starts_with('-') {
+            return get(flag2, repo);
+        } else {
+            return Err("Get command requires key argument\n".to_string());
+        }
+    }
+
+    if flag == "-rm" {
+        return remove_bookmark(flag2, repo);
+    }
+
+    if flag == "-clear" {
+        repo.clear_marks();
+        return Ok("Cleared marks\n".to_string());
+    }
+
+    Err("Unknown command for mark command".to_string())
+}
+
+fn mark_dir(arg: Option<&String>, repo: impl MarksRepository) -> Result<String, String> {
     repo.add_mark(arg.map(|it| it.to_string()))
         .map(|key| format!("Marked as {}\n", key))
 }
@@ -311,7 +335,7 @@ fn remove_bookmark(key: Option<&String>, repo: impl MarksRepository) -> Result<S
 mod test {
     use crate::run_cmd;
     use crate::MarksRepository;
-    use crate::{ERR_NO_CMD, HELP};
+    use crate::{ERR_NO_CMD, HELP_TM};
     use std::collections::BTreeMap;
 
     struct MockRepo {}
@@ -357,7 +381,7 @@ mod test {
         let result = run_cmd(vec!["tp".to_string(), "help".to_string()], mock_repo());
 
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), HELP.to_string());
+        assert_eq!(result.unwrap(), HELP_TM.to_string());
     }
 
     #[test]
@@ -370,7 +394,10 @@ mod test {
 
     #[test]
     fn should_list_marks() {
-        let result = run_cmd(vec!["tp".to_string(), "ls".to_string()], mock_repo());
+        let result = run_cmd(
+            vec!["tp".to_string(), "mark".to_string(), "-ls".to_string()],
+            mock_repo(),
+        );
 
         let out = concat!(
             "\n# Marks\n\n",
@@ -387,7 +414,7 @@ mod test {
 
     #[test]
     fn should_add_mark() {
-        let result = run_cmd(vec!["tp".to_string(), "m".to_string()], mock_repo());
+        let result = run_cmd(vec!["tp".to_string(), "mark".to_string()], mock_repo());
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "Marked as 5\n");
@@ -396,7 +423,7 @@ mod test {
     #[test]
     fn should_add_mark_with_path() {
         let result = run_cmd(
-            vec!["tp".to_string(), "m".to_string(), "dir".to_string()],
+            vec!["tp".to_string(), "mark".to_string(), "dir".to_string()],
             mock_repo(),
         );
 
@@ -407,7 +434,12 @@ mod test {
     #[test]
     fn should_get_mark() {
         let result = run_cmd(
-            vec!["tp".to_string(), "g".to_string(), "0".to_string()],
+            vec![
+                "tp".to_string(),
+                "mark".to_string(),
+                "-g".to_string(),
+                "0".to_string(),
+            ],
             mock_repo(),
         );
 
@@ -417,7 +449,10 @@ mod test {
 
     #[test]
     fn should_fail_to_get_mark_without_key_arg() {
-        let result = run_cmd(vec!["tp".to_string(), "g".to_string()], mock_repo());
+        let result = run_cmd(
+            vec!["tp".to_string(), "mark".to_string(), "-g".to_string()],
+            mock_repo(),
+        );
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "Get command requires key argument\n");
@@ -426,7 +461,12 @@ mod test {
     #[test]
     fn should_add_bookmark_for_current_dir() {
         let result = run_cmd(
-            vec!["tp".to_string(), "bm".to_string(), "cd".to_string()],
+            vec![
+                "tp".to_string(),
+                "mark".to_string(),
+                "-b".to_string(),
+                "cd".to_string(),
+            ],
             mock_repo(),
         );
 
@@ -437,7 +477,12 @@ mod test {
     #[test]
     fn should_remove_bookmark() {
         let result = run_cmd(
-            vec!["tp".to_string(), "rm".to_string(), "b".to_string()],
+            vec![
+                "tp".to_string(),
+                "mark".to_string(),
+                "-rm".to_string(),
+                "b".to_string(),
+            ],
             mock_repo(),
         );
 
@@ -447,7 +492,10 @@ mod test {
 
     #[test]
     fn should_clear_marks() {
-        let result = run_cmd(vec!["tp".to_string(), "clear".to_string()], mock_repo());
+        let result = run_cmd(
+            vec!["tp".to_string(), "mark".to_string(), "-clear".to_string()],
+            mock_repo(),
+        );
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "Cleared marks\n");
