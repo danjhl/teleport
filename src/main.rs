@@ -1,163 +1,21 @@
-use std::collections::BTreeMap;
+mod data;
+
 use std::env;
-use std::fs::File;
-use std::fs::OpenOptions;
-use std::io;
-use std::io::prelude::*;
-use std::io::BufRead;
-use std::path::Path;
 use std::path::PathBuf;
 
-static DATA_PATH: &str = ".cache/teleport/";
-static MARKED: &str = "marked";
-static BOOKMARKED: &str = "bookmarked";
+use crate::data::repo::*;
 
-static HELP_TM: &str = r#"
-Usage: tm [CMD] [ARG] [FLAGS]
+static HELP: &str = r#"
+Usage: [ARGS] [FLAGS]
 
-Commands: 
-
-tm [dir]            Mark directory uses current directory if no dir argument
-tm [dir] -b [key]   Mark as bookmark with key
-tm -ls              List marked directories
-tm -help            Show usage
-tm -g [key]         Get marked directory
+[dir]            Mark directory uses current directory if no dir argument
+[dir] -b [key]   Mark as bookmark with key
+-ls              List marked directories
+-h, --help       Show usage
+-g [key]         Get marked directory
+-rm [key]        Remove bookmark with key
+-clr, --clear    Remove all marks
 "#;
-
-static ERR_NO_CMD: &str = "No command given. Run 'tp help' for more.";
-
-struct Repository {}
-
-trait MarksRepository {
-    fn get_marks(&self) -> BTreeMap<String, String>;
-    fn get_bookmarks(&self) -> BTreeMap<String, String>;
-    fn add_mark(&self, path: Option<String>) -> Result<usize, String>;
-    fn store_bookmarks(&self, bookmarks: BTreeMap<String, String>);
-    fn clear_marks(&self);
-}
-
-impl MarksRepository for Repository {
-    fn get_marks(&self) -> BTreeMap<String, String> {
-        get_marks_for(MARKED)
-    }
-
-    fn get_bookmarks(&self) -> BTreeMap<String, String> {
-        get_marks_for(BOOKMARKED)
-    }
-
-    fn add_mark(&self, path: Option<String>) -> Result<usize, String> {
-        let dir = env::current_dir().expect("Current directory");
-        let marked_path = get_marks_file_path(MARKED);
-        let marked = self.get_marks();
-        let key = marked.len();
-
-        let value = if path.is_none() {
-            dir
-        } else {
-            let mut path_buf = PathBuf::new();
-            let path_uw = path.unwrap();
-            path_buf.push(&path_uw);
-
-            if !path_buf.is_dir() {
-                return Err("Path arg must be a directory".to_string());
-            }
-
-            if path_buf.is_absolute() {
-                path_buf
-            } else {
-                dir.join(path_buf)
-            }
-        };
-
-        let new_line = mark_entry(&value, key);
-
-        let mut file = OpenOptions::new()
-            .write(true)
-            .append(true)
-            .open(marked_path)
-            .unwrap();
-
-        if let Err(e) = writeln!(file, "{}", new_line) {
-            return Err(e.to_string());
-        }
-
-        Ok(key)
-    }
-
-    fn store_bookmarks(&self, bookmarks: BTreeMap<String, String>) {
-        let bookmarked_path = get_marks_file_path(BOOKMARKED);
-        let mut content = String::new();
-
-        for (key, value) in bookmarks {
-            content.push_str(&key);
-            content.push(',');
-            content.push_str(&value);
-            content.push('\n');
-        }
-
-        let mut file = OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .open(bookmarked_path)
-            .unwrap();
-
-        if let Err(e) = write!(file, "{}", content) {
-            eprintln!("Couldn't write to file: {}", e)
-        }
-    }
-
-    fn clear_marks(&self) {
-        let marked_path = get_marks_file_path(MARKED);
-        let mut file = File::create(marked_path).unwrap();
-        file.set_len(0);
-    }
-}
-
-fn get_marks_for(file: &'static str) -> BTreeMap<String, String> {
-    let marked_path = get_marks_file_path(file);
-
-    let file = OpenOptions::new().read(true).open(marked_path).unwrap();
-
-    let lines = io::BufReader::new(file).lines();
-    let mut map = BTreeMap::new();
-
-    for line in lines {
-        let split_o = line.unwrap();
-        let mut split = split_o.split(',');
-        let key_o = split.next();
-        let dir_o = split.next();
-
-        if key_o.is_none() || dir_o.is_none() {
-            continue;
-        }
-
-        let key = key_o.unwrap();
-        let dir = dir_o.unwrap();
-
-        map.insert(String::from(key), String::from(dir));
-    }
-
-    map
-}
-
-fn get_marks_file_path(file: &'static str) -> PathBuf {
-    let home_dir = home::home_dir().expect("Unable to get home directory");
-
-    let mut data_path = PathBuf::new();
-    data_path.push(home_dir.as_path());
-    data_path.push(DATA_PATH);
-
-    let mut marked_path = PathBuf::new();
-    marked_path.push(&data_path);
-    marked_path.push(Path::new(file));
-
-    marked_path
-}
-
-fn mark_entry(cd: &PathBuf, key: usize) -> String {
-    format!("{},{}", key, cd.to_str().expect("Valid string"))
-}
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -171,20 +29,10 @@ fn main() {
 }
 
 fn run_cmd(args: Vec<String>, repo: impl MarksRepository) -> Result<String, String> {
-    let cmd = match args.get(1) {
-        Some(s) => s,
-        None => return Err(ERR_NO_CMD.to_string()),
-    };
+    let flags: Vec<&String> = args.iter().filter(|a| a.starts_with('-')).collect();
+    let cmd_args: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
 
-    if cmd == "help" {
-        return Ok(HELP_TM.to_string());
-    }
-
-    if cmd == "mark" {
-        return mark(&args[2..], repo);
-    }
-
-    Err(format!("Unknown command '{}'", cmd))
+    mark(&cmd_args[1..], flags, repo)
 }
 
 fn ls(repo: impl MarksRepository) -> String {
@@ -196,59 +44,89 @@ fn ls(repo: impl MarksRepository) -> String {
     for (key, value) in marks {
         out.push_str(&format!("{:width$} : {}\n", key, value, width = 5));
     }
-    out.push_str("\n");
+    out.push('\n');
 
     out.push_str("# Bookmarks\n\n");
     for (key, value) in bookmarks {
         out.push_str(&format!("{:width$} : {}\n", key, value, width = 5));
     }
-    out.push_str("\n");
+    out.push('\n');
     out
 }
 
-fn mark(args: &[String], repo: impl MarksRepository) -> Result<String, String> {
-    if args.is_empty() {
+fn mark(
+    args: &[&String],
+    flags: Vec<&String>,
+    repo: impl MarksRepository,
+) -> Result<String, String> {
+    if flags.len() > 1 {
+        return Err("Cannot mix flags".to_string());
+    }
+
+    if args.is_empty() && flags.is_empty() {
         return mark_dir(None, repo);
     }
 
-    let flag = match args.get(0) {
-        Some(some) => some,
-        None => return Err("Missing command for mark command".to_string()),
-    };
+    if flags.is_empty() {
+        if args.len() == 1 {
+            return mark_dir(args.first().map(|s| s.to_owned()), repo);
+        } else {
+            return Err("Too many argurments".to_string());
+        }
+    }
+
+    let flag = flags.first().unwrap().to_string();
 
     if flag == "-ls" {
         return Ok(ls(repo));
     }
 
-    if !flag.starts_with('-') && args.len() == 1 {
-        return mark_dir(args.get(0), repo);
-    }
-
-    let flag2 = args.get(1);
-    let arg2: Option<&String> = args.get(2);
-
-    if flag == "-b" && flag2.is_some() && !flag2.unwrap().starts_with('-') {
-        return bookmark(flag2, arg2, repo);
+    if flag == "-h" || flag == "--help" {
+        return Ok(HELP.to_string());
     }
 
     if flag == "-g" {
-        if flag2.is_some() && !flag2.unwrap().starts_with('-') {
-            return get(flag2, repo);
-        } else {
+        if args.len() == 1 {
+            return get(args.first().map(|s| s.to_owned()), repo);
+        } else if args.is_empty() {
             return Err("Get command requires key argument\n".to_string());
+        } else {
+            return Err("Too many arguments".to_string());
+        }
+    }
+
+    if flag == "-b" {
+        if args.len() == 2 {
+            return bookmark(
+                args.get(1).map(|s| s.to_owned()),
+                args.first().map(|s| s.to_owned()),
+                repo,
+            );
+        } else if args.len() == 1 {
+            return bookmark(args.first().map(|s| s.to_owned()), None, repo);
+        } else {
+            return Err("Wrong number of arguments".to_string());
         }
     }
 
     if flag == "-rm" {
-        return remove_bookmark(flag2, repo);
+        if args.len() != 1 {
+            return Err("Wrong number of arguments".to_string());
+        } else {
+            return remove_bookmark(args.first().map(|s| s.to_owned()), repo);
+        }
     }
 
-    if flag == "-clear" {
-        repo.clear_marks();
-        return Ok("Cleared marks\n".to_string());
+    if flag == "-clr" || flag == "--clear" {
+        if !args.is_empty() {
+            return Err("Wrong number of arguments".to_string());
+        } else {
+            repo.clear_marks();
+            return Ok("Cleared marks\n".to_string());
+        }
     }
 
-    Err("Unknown command for mark command".to_string())
+    Err("Unkown command for mark command".to_string())
 }
 
 fn mark_dir(arg: Option<&String>, repo: impl MarksRepository) -> Result<String, String> {
@@ -264,16 +142,13 @@ fn get(arg: Option<&String>, repo: impl MarksRepository) -> Result<String, Strin
     let marks = repo.get_marks();
     let bookmarks = repo.get_bookmarks();
 
-    let mut value_o = bookmarks.get(key);
-    if value_o.is_some() {
-        return Ok(value_o.unwrap().to_string());
+    match bookmarks.get(key) {
+        Some(v) => Ok(v.to_string()),
+        None => match marks.get(key) {
+            Some(v) => Ok(v.to_string()),
+            None => Ok("".to_string()),
+        },
     }
-
-    let value_o = marks.get(key);
-    if value_o.is_some() {
-        return Ok(value_o.unwrap().to_string());
-    }
-    return Ok("".to_string());
 }
 
 fn bookmark(
@@ -285,7 +160,6 @@ fn bookmark(
         return Err("bookmark needs a key argument".to_string());
     }
 
-    // todo duplicated
     let dir = env::current_dir().expect("Current directory");
 
     let value = if path.is_none() {
@@ -335,7 +209,7 @@ fn remove_bookmark(key: Option<&String>, repo: impl MarksRepository) -> Result<S
 mod test {
     use crate::run_cmd;
     use crate::MarksRepository;
-    use crate::{ERR_NO_CMD, HELP_TM};
+    use crate::HELP;
     use std::collections::BTreeMap;
 
     struct MockRepo {}
@@ -369,35 +243,24 @@ mod test {
     }
 
     #[test]
-    fn should_fail_without_cmd() {
-        let result = run_cmd(vec!["tp".to_string()], mock_repo());
-
-        assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), ERR_NO_CMD.to_string());
-    }
-
-    #[test]
     fn should_print_help() {
-        let result = run_cmd(vec!["tp".to_string(), "help".to_string()], mock_repo());
+        let result = run_cmd(vec!["bin".to_string(), "-h".to_string()], mock_repo());
 
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), HELP_TM.to_string());
+        assert_eq!(result.unwrap(), HELP.to_string());
     }
 
     #[test]
-    fn should_fail_with_unknown_cmd() {
-        let result = run_cmd(vec!["tp".to_string(), "unknown".to_string()], mock_repo());
+    fn should_fail_with_unknown_flag() {
+        let result = run_cmd(vec!["bin".to_string(), "-unknown".to_string()], mock_repo());
 
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "Unknown command 'unknown'");
+        assert_eq!(result.unwrap_err(), "Unkown command for mark command");
     }
 
     #[test]
     fn should_list_marks() {
-        let result = run_cmd(
-            vec!["tp".to_string(), "mark".to_string(), "-ls".to_string()],
-            mock_repo(),
-        );
+        let result = run_cmd(vec!["bin".to_string(), "-ls".to_string()], mock_repo());
 
         let out = concat!(
             "\n# Marks\n\n",
@@ -414,7 +277,7 @@ mod test {
 
     #[test]
     fn should_add_mark() {
-        let result = run_cmd(vec!["tp".to_string(), "mark".to_string()], mock_repo());
+        let result = run_cmd(vec!["bin".to_string()], mock_repo());
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "Marked as 5\n");
@@ -422,10 +285,7 @@ mod test {
 
     #[test]
     fn should_add_mark_with_path() {
-        let result = run_cmd(
-            vec!["tp".to_string(), "mark".to_string(), "dir".to_string()],
-            mock_repo(),
-        );
+        let result = run_cmd(vec!["bin".to_string(), "dir".to_string()], mock_repo());
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "Marked as 5\n");
@@ -434,12 +294,7 @@ mod test {
     #[test]
     fn should_get_mark() {
         let result = run_cmd(
-            vec![
-                "tp".to_string(),
-                "mark".to_string(),
-                "-g".to_string(),
-                "0".to_string(),
-            ],
+            vec!["bin".to_string(), "-g".to_string(), "0".to_string()],
             mock_repo(),
         );
 
@@ -449,10 +304,7 @@ mod test {
 
     #[test]
     fn should_fail_to_get_mark_without_key_arg() {
-        let result = run_cmd(
-            vec!["tp".to_string(), "mark".to_string(), "-g".to_string()],
-            mock_repo(),
-        );
+        let result = run_cmd(vec!["bin".to_string(), "-g".to_string()], mock_repo());
 
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "Get command requires key argument\n");
@@ -461,12 +313,7 @@ mod test {
     #[test]
     fn should_add_bookmark_for_current_dir() {
         let result = run_cmd(
-            vec![
-                "tp".to_string(),
-                "mark".to_string(),
-                "-b".to_string(),
-                "cd".to_string(),
-            ],
+            vec!["bin".to_string(), "-b".to_string(), "cd".to_string()],
             mock_repo(),
         );
 
@@ -477,12 +324,7 @@ mod test {
     #[test]
     fn should_remove_bookmark() {
         let result = run_cmd(
-            vec![
-                "tp".to_string(),
-                "mark".to_string(),
-                "-rm".to_string(),
-                "b".to_string(),
-            ],
+            vec!["bin".to_string(), "-rm".to_string(), "b".to_string()],
             mock_repo(),
         );
 
@@ -492,10 +334,7 @@ mod test {
 
     #[test]
     fn should_clear_marks() {
-        let result = run_cmd(
-            vec!["tp".to_string(), "mark".to_string(), "-clear".to_string()],
-            mock_repo(),
-        );
+        let result = run_cmd(vec!["bin".to_string(), "-clr".to_string()], mock_repo());
 
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "Cleared marks\n");
