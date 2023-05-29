@@ -17,6 +17,10 @@ Usage: [ARGS] [FLAGS]
 -clr, --clear    Remove all marks
 "#;
 
+static TOO_MANY_ARGS: &str = "Too many arguments see -h for help";
+static WRONG_NUMBER_OF_ARGS: &str = "Wrong number of arguments see -h for help";
+
+
 fn main() {
     let args: Vec<String> = env::args().collect();
     let repo = Repository {};
@@ -32,7 +36,76 @@ fn run_cmd(args: Vec<String>, repo: impl MarksRepository) -> Result<String, Stri
     let flags: Vec<&String> = args.iter().filter(|a| a.starts_with('-')).collect();
     let cmd_args: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
 
-    mark(&cmd_args[1..], flags, repo)
+    let args = &cmd_args[1..];
+
+    if flags.len() > 1 {
+        return Err(TOO_MANY_ARGS.to_string());
+    }
+
+    if args.is_empty() && flags.is_empty() {
+        return mark_dir(None, repo);
+    }
+
+    if flags.is_empty() {
+        if args.len() == 1 {
+            return mark_dir(args.first().map(|s| s.as_str()), repo);
+        } else {
+            return Err(TOO_MANY_ARGS.to_string());
+        }
+    }
+
+    let flag = flags.first().unwrap().to_string();
+
+    if flag == "-ls" {
+        return Ok(ls(repo));
+    }
+
+    if flag == "-h" || flag == "--help" {
+        return Ok(HELP.to_string());
+    }
+
+    if flag == "-g" {
+        if args.len() == 1 {
+            return get(args.first().map(|s| s.to_owned()), repo);
+        } else if args.is_empty() {
+            return Err("Command requires a key argument\n".to_string());
+        } else {
+            return Err(TOO_MANY_ARGS.to_string());
+        }
+    }
+
+    if flag == "-b" {
+        if args.len() == 2 {
+            return bookmark(
+                args.get(1).map(|s| s.to_owned()),
+                args.first().map(|s| s.to_owned()),
+                repo,
+            );
+        } else if args.len() == 1 {
+            return bookmark(args.first().map(|s| s.to_owned()), None, repo);
+        } else {
+            return Err(WRONG_NUMBER_OF_ARGS.to_string());
+        }
+    }
+
+    if flag == "-rm" {
+        if args.len() != 1 {
+            return Err(WRONG_NUMBER_OF_ARGS.to_string());
+        } else {
+            return remove_bookmark(args.first().map(|s| s.to_owned()), repo);
+        }
+    }
+
+    if flag == "-clr" || flag == "--clear" {
+        if !args.is_empty() {
+            return Err(WRONG_NUMBER_OF_ARGS.to_string());
+        } else {
+            repo.clear_marks();
+            return Ok("Cleared marks\n".to_string());
+        }
+    }
+
+    Err("Unkown command for mark command".to_string())
 }
 
 fn ls(repo: impl MarksRepository) -> String {
@@ -54,89 +127,13 @@ fn ls(repo: impl MarksRepository) -> String {
     out
 }
 
-fn mark(
-    args: &[&String],
-    flags: Vec<&String>,
-    repo: impl MarksRepository,
-) -> Result<String, String> {
-    if flags.len() > 1 {
-        return Err("Cannot mix flags".to_string());
-    }
-
-    if args.is_empty() && flags.is_empty() {
-        return mark_dir(None, repo);
-    }
-
-    if flags.is_empty() {
-        if args.len() == 1 {
-            return mark_dir(args.first().map(|s| s.to_owned()), repo);
-        } else {
-            return Err("Too many argurments".to_string());
-        }
-    }
-
-    let flag = flags.first().unwrap().to_string();
-
-    if flag == "-ls" {
-        return Ok(ls(repo));
-    }
-
-    if flag == "-h" || flag == "--help" {
-        return Ok(HELP.to_string());
-    }
-
-    if flag == "-g" {
-        if args.len() == 1 {
-            return get(args.first().map(|s| s.to_owned()), repo);
-        } else if args.is_empty() {
-            return Err("Get command requires key argument\n".to_string());
-        } else {
-            return Err("Too many arguments".to_string());
-        }
-    }
-
-    if flag == "-b" {
-        if args.len() == 2 {
-            return bookmark(
-                args.get(1).map(|s| s.to_owned()),
-                args.first().map(|s| s.to_owned()),
-                repo,
-            );
-        } else if args.len() == 1 {
-            return bookmark(args.first().map(|s| s.to_owned()), None, repo);
-        } else {
-            return Err("Wrong number of arguments".to_string());
-        }
-    }
-
-    if flag == "-rm" {
-        if args.len() != 1 {
-            return Err("Wrong number of arguments".to_string());
-        } else {
-            return remove_bookmark(args.first().map(|s| s.to_owned()), repo);
-        }
-    }
-
-    if flag == "-clr" || flag == "--clear" {
-        if !args.is_empty() {
-            return Err("Wrong number of arguments".to_string());
-        } else {
-            repo.clear_marks();
-            return Ok("Cleared marks\n".to_string());
-        }
-    }
-
-    Err("Unkown command for mark command".to_string())
-}
-
-fn mark_dir(arg: Option<&String>, repo: impl MarksRepository) -> Result<String, String> {
-    repo.add_mark(arg.map(|it| it.to_string()))
-        .map(|key| format!("Marked as {}\n", key))
+fn mark_dir(arg: Option<&str>, repo: impl MarksRepository) -> Result<String, String> {
+    repo.add_mark(arg).map(|key| format!("Marked as {}\n", key))
 }
 
 fn get(arg: Option<&String>, repo: impl MarksRepository) -> Result<String, String> {
     if arg.is_none() {
-        return Err("Get command requires key argument\n".to_string());
+        return Err("Command requires a key argument\n".to_string());
     }
     let key = arg.unwrap();
     let marks = repo.get_marks();
@@ -157,7 +154,7 @@ fn bookmark(
     repo: impl MarksRepository,
 ) -> Result<String, String> {
     if key.is_none() {
-        return Err("bookmark needs a key argument".to_string());
+        return Err("Command requires a key argument".to_string());
     }
 
     let dir = env::current_dir().expect("Current directory");
@@ -170,7 +167,7 @@ fn bookmark(
         path_buf.push(&path_uw);
 
         if !path_buf.is_dir() {
-            return Err("Path arg must be a directory".to_string());
+            return Err("Path argument must be a directory".to_string());
         }
 
         if path_buf.is_absolute() {
@@ -190,7 +187,7 @@ fn bookmark(
 
 fn remove_bookmark(key: Option<&String>, repo: impl MarksRepository) -> Result<String, String> {
     if key.is_none() {
-        return Err("remove requires key argument".to_string());
+        return Err("Command requires a key argument".to_string());
     }
 
     let key_uw = key.unwrap();
@@ -204,6 +201,7 @@ fn remove_bookmark(key: Option<&String>, repo: impl MarksRepository) -> Result<S
         return Err(format!("No bookmark named {} found", key_uw));
     }
 }
+
 
 #[cfg(test)]
 mod test {
@@ -222,7 +220,7 @@ mod test {
             map
         }
 
-        fn add_mark(&self, path: Option<String>) -> Result<usize, String> {
+        fn add_mark(&self, path: Option<&str>) -> Result<usize, String> {
             Ok(5)
         }
 
@@ -307,7 +305,7 @@ mod test {
         let result = run_cmd(vec!["bin".to_string(), "-g".to_string()], mock_repo());
 
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "Get command requires key argument\n");
+        assert_eq!(result.unwrap_err(), "Command requires a key argument\n");
     }
 
     #[test]

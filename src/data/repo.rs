@@ -17,7 +17,7 @@ pub struct Repository {}
 pub trait MarksRepository {
     fn get_marks(&self) -> BTreeMap<String, String>;
     fn get_bookmarks(&self) -> BTreeMap<String, String>;
-    fn add_mark(&self, path: Option<String>) -> Result<usize, String>;
+    fn add_mark(&self, path: Option<&str>) -> Result<usize, String>;
     fn store_bookmarks(&self, bookmarks: BTreeMap<String, String>);
     fn clear_marks(&self);
 }
@@ -31,7 +31,7 @@ impl MarksRepository for Repository {
         get_marks_for(BOOKMARKED)
     }
 
-    fn add_mark(&self, path: Option<String>) -> Result<usize, String> {
+    fn add_mark(&self, path: Option<&str>) -> Result<usize, String> {
         let dir = env::current_dir().expect("Current directory");
         let marked_path = get_marks_file_path(MARKED);
         let marked = self.get_marks();
