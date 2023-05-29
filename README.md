@@ -5,7 +5,7 @@ teleport is a commandline tool to quickly move to bookmarked directories.
 Mark the current directory as a bookmark with `tm -b bookmark`.
 Now you can move there using `tp bookmark`.
 
-You can also quickly mark directories with numbers using `tm` or `tm directory`.
+You can also quickly mark directories with numbers using `tm` or `tm directory`.\
 After the message `Marked as 0` and you can move to `directory` using the index with `tp 0`.
 
 
