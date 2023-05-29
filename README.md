@@ -6,7 +6,7 @@ Mark the current directory as a bookmark with `tm -b bookmark`.
 Now you can move there using `tp bookmark`.
 
 You can also quickly mark directories with numbers using `tm` or `tm directory`.\
-After the message `Marked as 0` and you can move to `directory` using the index with `tp 0`.
+After the message `Marked as 0` you can move to `directory` using the index with `tp 0`.
 
 
 # Installation
