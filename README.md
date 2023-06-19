@@ -2,7 +2,7 @@
 
 ![build](https://github.com/danjhl/teleport/actions/workflows/build.yml/badge.svg)
 
-teleport is a commandline tool to quickly move to bookmarked directories.
+Teleport is a commandline tool to quickly move to bookmarked directories.
 
 # Usage
 
